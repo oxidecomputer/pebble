@@ -243,6 +243,9 @@ func (g *generator) randValue(min, max int) []byte {
 	if max > min {
 		n += g.rng.Intn(max - min)
 	}
+	if n == 0 {
+		return nil
+	}
 	buf := make([]byte, n)
 	g.fillRand(buf)
 	return buf
