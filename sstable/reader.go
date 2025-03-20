@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"unsafe"
@@ -2278,11 +2279,54 @@ func checkChecksum(
 	}
 
 	if expectedChecksum != computedChecksum {
+		// Check if the checksum was due to a singular bit flip and report it.
+		data := slices.Clone(b[:bh.Length+1])
+		found, indexFound, bitFound := checkSliceForBitFlip(data, checksumType, expectedChecksum)
+		bitFlipExtraMsg := ""
+		if found {
+			bitFlipExtraMsg = fmt.Sprintf(". bit flip found: byte index %d. got: %x. want: %x.",
+				indexFound, data[indexFound], data[indexFound]^(1<<bitFound))
+		}
 		return base.CorruptionErrorf(
-			"pebble/table: invalid table %s (checksum mismatch at %d/%d)",
-			errors.Safe(fileNum), errors.Safe(bh.Offset), errors.Safe(bh.Length))
+			"pebble/table: invalid table %s (%s checksum mismatch at %d/%d, expected %x, computed %x%s)",
+			errors.Safe(fileNum), checksumType, errors.Safe(bh.Offset), errors.Safe(bh.Length),
+			expectedChecksum, computedChecksum, bitFlipExtraMsg)
 	}
 	return nil
+}
+
+func checkSliceForBitFlip(
+	data []byte, checksumType ChecksumType, expectedChecksum uint32,
+) (found bool, indexFound int, bitFound int) {
+	// TODO(edward) This checking process likely can be made faster.
+	iterationLimit := 40 * (1 << 10) // 40KB
+	for i := 0; i < min(len(data), iterationLimit); i++ {
+		foundFlip, bit := checkByteForFlip(data, i, checksumType, expectedChecksum)
+		if foundFlip {
+			return true, i, bit
+		}
+	}
+	return false, 0, 0
+}
+
+func checkByteForFlip(
+	data []byte, i int, checksumType ChecksumType, expectedChecksum uint32,
+) (found bool, bit int) {
+	for bit := 0; bit < 8; bit++ {
+		data[i] ^= (1 << bit)
+		var computedChecksum uint32
+		switch checksumType {
+		case ChecksumTypeCRC32c:
+			computedChecksum = crc.New(data).Value()
+		case ChecksumTypeXXHash64:
+			computedChecksum = uint32(xxhash.Sum64(data))
+		}
+		data[i] ^= (1 << bit)
+		if computedChecksum == expectedChecksum {
+			return true, bit
+		}
+	}
+	return false, 0
 }
 
 // readBlock reads and decompresses a block from disk into memory.

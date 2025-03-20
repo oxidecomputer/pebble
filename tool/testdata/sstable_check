@@ -45,7 +45,7 @@ sstable check
 testdata/corrupted.sst
 ----
 corrupted.sst
-pebble/table: invalid table 000000 (checksum mismatch at 87/602)
+pebble/table: invalid table 000000 (crc32c checksum mismatch at 87/602, expected c14c3364, computed d8d1c692)
 
 sstable check
 testdata/bad-magic.sst

@@ -604,85 +604,129 @@ func TestReaderChecksumErrors(t *testing.T) {
 		t.Run(fmt.Sprintf("checksum-type=%d", checksumType), func(t *testing.T) {
 			for _, twoLevelIndex := range []bool{false, true} {
 				t.Run(fmt.Sprintf("two-level-index=%t", twoLevelIndex), func(t *testing.T) {
-					mem := vfs.NewMem()
+					for _, corruptionType := range []string{"first-byte", "random-bit"} {
+						t.Run(fmt.Sprintf("corruption-type=%s", corruptionType), func(t *testing.T) {
+							mem := vfs.NewMem()
 
-					{
-						// Create an sstable with 3 data blocks.
-						f, err := mem.Create("test")
-						require.NoError(t, err)
+							{
+								// Create an sstable with 3 data blocks.
+								f, err := mem.Create("test")
+								require.NoError(t, err)
 
-						const blockSize = 32
-						indexBlockSize := 4096
-						if twoLevelIndex {
-							indexBlockSize = 1
-						}
+								const blockSize = 32
+								indexBlockSize := 4096
+								if twoLevelIndex {
+									indexBlockSize = 1
+								}
 
-						w := NewWriter(f, WriterOptions{
-							BlockSize:      blockSize,
-							IndexBlockSize: indexBlockSize,
-							Checksum:       checksumType,
+								w := NewWriter(f, WriterOptions{
+									BlockSize:      blockSize,
+									IndexBlockSize: indexBlockSize,
+									Checksum:       checksumType,
+								})
+								require.NoError(t, w.Set(bytes.Repeat([]byte("a"), blockSize), nil))
+								require.NoError(t, w.Set(bytes.Repeat([]byte("b"), blockSize), nil))
+								require.NoError(t, w.Set(bytes.Repeat([]byte("c"), blockSize), nil))
+								require.NoError(t, w.Close())
+							}
+
+							// Load the layout so that we know the location of the data blocks.
+							var layout *Layout
+							{
+								f, err := mem.Open("test")
+								require.NoError(t, err)
+
+								r, err := NewReader(f, ReaderOptions{})
+								require.NoError(t, err)
+								layout, err = r.Layout()
+								require.NoError(t, err)
+								require.EqualValues(t, len(layout.Data), 3)
+								require.NoError(t, r.Close())
+							}
+
+							for _, bh := range layout.Data {
+								// Read the sstable and corrupt the first byte or a random bit in
+								// the target data block.
+								orig, err := mem.Open("test")
+								require.NoError(t, err)
+								data, err := io.ReadAll(orig)
+								require.NoError(t, err)
+								require.NoError(t, orig.Close())
+
+								if corruptionType == "first-byte" {
+									data[bh.Offset] ^= 0xff
+								} else {
+									// Corrupt a random bit in the block.
+									r := rand.New(rand.NewSource(uint64(time.Now().UnixNano())))
+									randOffset := r.Uint64n(bh.Length) + bh.Offset
+									println(bh.Offset, bh.Length)
+									randBit := uint(r.Intn(8))
+									data[randOffset] ^= (1 << randBit)
+								}
+
+								corrupted, err := mem.Create("corrupted")
+								require.NoError(t, err)
+								_, err = corrupted.Write(data)
+								require.NoError(t, err)
+								require.NoError(t, corrupted.Close())
+
+								// Verify that we encounter a checksum mismatch error while iterating
+								// over the sstable.
+								corrupted, err = mem.Open("corrupted")
+								require.NoError(t, err)
+
+								r, err := NewReader(corrupted, ReaderOptions{})
+
+								if corruptionType == "first-byte" {
+									require.NoError(t, err)
+
+									iter, err := r.NewIter(nil, nil)
+									require.NoError(t, err)
+									for k, _ := iter.First(); k != nil; k, _ = iter.Next() {
+									}
+									require.Regexp(t, `checksum mismatch`, iter.Error())
+									require.Regexp(t, `checksum mismatch`, iter.Close())
+
+									iter, err = r.NewIter(nil, nil)
+									require.NoError(t, err)
+									for k, _ := iter.Last(); k != nil; k, _ = iter.Prev() {
+									}
+									require.Regexp(t, `checksum mismatch`, iter.Error())
+									require.Regexp(t, `checksum mismatch`, iter.Close())
+
+									require.NoError(t, r.Close())
+								} else {
+									// Check that the error message has the bit flip message if there was an error.
+									checkBitFlipErr := func(err error) bool {
+										if err != nil {
+											require.Regexp(t, `checksum mismatch.+bit flip found:.+`, err)
+											return true
+										}
+										return false
+									}
+									if checkBitFlipErr(err) {
+										break
+									}
+									iter, err := r.NewIter(nil, nil)
+									if checkBitFlipErr(err) {
+										break
+									}
+									for k, _ := iter.First(); k != nil; k, _ = iter.Next() {
+									}
+									if checkBitFlipErr(iter.Error()) && checkBitFlipErr(iter.Close()) {
+									}
+									iter, err = r.NewIter(nil, nil)
+									if checkBitFlipErr(err) {
+										break
+									}
+									for k, _ := iter.Last(); k != nil; k, _ = iter.Prev() {
+									}
+									if checkBitFlipErr(iter.Error()) && checkBitFlipErr(iter.Close()) {
+									}
+									require.NoError(t, r.Close())
+								}
+							}
 						})
-						require.NoError(t, w.Set(bytes.Repeat([]byte("a"), blockSize), nil))
-						require.NoError(t, w.Set(bytes.Repeat([]byte("b"), blockSize), nil))
-						require.NoError(t, w.Set(bytes.Repeat([]byte("c"), blockSize), nil))
-						require.NoError(t, w.Close())
-					}
-
-					// Load the layout so that we no the location of the data blocks.
-					var layout *Layout
-					{
-						f, err := mem.Open("test")
-						require.NoError(t, err)
-
-						r, err := NewReader(f, ReaderOptions{})
-						require.NoError(t, err)
-						layout, err = r.Layout()
-						require.NoError(t, err)
-						require.EqualValues(t, len(layout.Data), 3)
-						require.NoError(t, r.Close())
-					}
-
-					for _, bh := range layout.Data {
-						// Read the sstable and corrupt the first byte in the target data
-						// block.
-						orig, err := mem.Open("test")
-						require.NoError(t, err)
-						data, err := io.ReadAll(orig)
-						require.NoError(t, err)
-						require.NoError(t, orig.Close())
-
-						// Corrupt the first byte in the block.
-						data[bh.Offset] ^= 0xff
-
-						corrupted, err := mem.Create("corrupted")
-						require.NoError(t, err)
-						_, err = corrupted.Write(data)
-						require.NoError(t, err)
-						require.NoError(t, corrupted.Close())
-
-						// Verify that we encounter a checksum mismatch error while iterating
-						// over the sstable.
-						corrupted, err = mem.Open("corrupted")
-						require.NoError(t, err)
-
-						r, err := NewReader(corrupted, ReaderOptions{})
-						require.NoError(t, err)
-
-						iter, err := r.NewIter(nil, nil)
-						require.NoError(t, err)
-						for k, _ := iter.First(); k != nil; k, _ = iter.Next() {
-						}
-						require.Regexp(t, `checksum mismatch`, iter.Error())
-						require.Regexp(t, `checksum mismatch`, iter.Close())
-
-						iter, err = r.NewIter(nil, nil)
-						require.NoError(t, err)
-						for k, _ := iter.Last(); k != nil; k, _ = iter.Prev() {
-						}
-						require.Regexp(t, `checksum mismatch`, iter.Error())
-						require.Regexp(t, `checksum mismatch`, iter.Close())
-
-						require.NoError(t, r.Close())
 					}
 				})
 			}
