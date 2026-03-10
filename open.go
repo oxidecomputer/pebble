@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"os"
 	"sort"
@@ -552,7 +551,7 @@ func GetVersion(dir string, fs vfs.FS) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			data, err := ioutil.ReadAll(f)
+			data, err := io.ReadAll(f)
 			f.Close()
 
 			if err != nil {
@@ -743,7 +742,7 @@ func checkOptions(opts *Options, path string) (strictWALTail bool, err error) {
 	}
 	defer f.Close()
 
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return false, err
 	}

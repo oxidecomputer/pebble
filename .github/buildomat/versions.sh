@@ -1,0 +1,2 @@
+export GOTOOLCHAIN=local
+GO_VERSION=1.22.11

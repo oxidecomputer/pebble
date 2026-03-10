@@ -248,8 +248,9 @@ func TestIterHistories(t *testing.T) {
 					case "name":
 						name = arg.Vals[0]
 					case "reader":
-						reader = batches[arg.Vals[0]]
-						if reader == nil {
+						var ok bool
+						reader, ok = batches[arg.Vals[0]]
+						if !ok {
 							return fmt.Sprintf("unknown reader %q", arg.Vals[0])
 						}
 					case "point-key-filter":

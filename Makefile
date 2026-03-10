@@ -1,9 +1,12 @@
 GO := go
+GO_INSTALL := GOBIN='$(abspath bin)' $(GO) install
 PKG := ./...
 GOFLAGS :=
 STRESSFLAGS :=
 TAGS := invariants
 TESTS := .
+
+export PATH := $(abspath bin):$(PATH)
 
 .PHONY: all
 all:
@@ -15,9 +18,15 @@ all:
 	@echo "  make stressmeta"
 	@echo "  make clean"
 
+bin/crlfmt: go.mod go.sum
+	$(GO_INSTALL) -v github.com/cockroachdb/crlfmt
+
+bin/staticcheck: go.mod go.sum
+	$(GO_INSTALL) -v honnef.co/go/tools/cmd/staticcheck
+
 override testflags :=
 .PHONY: test
-test:
+test: bin/crlfmt bin/staticcheck
 	${GO} test -tags '$(TAGS)' ${testflags} -run ${TESTS} ${PKG}
 
 .PHONY: testrace
@@ -60,18 +69,4 @@ ifneq ($(git_dirty),)
 	$(error mod-tidy-check must be invoked on a clean repository)
 endif
 	@${GO} mod tidy
-	$(MAKE) git-clean-check
-
-.PHONY: format
-format:
-	for _file in $$(gofmt -s -l . | grep -vE '^vendor/'); do \
-		gofmt -s -w $$_file ; \
-	done
-
-.PHONY: format-check
-format-check:
-ifneq ($(git_dirty),)
-	$(error format-check must be invoked on a clean repository)
-endif
-	$(MAKE) format
 	$(MAKE) git-clean-check

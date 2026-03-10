@@ -1722,7 +1722,7 @@ func BenchmarkIteratorSeqSeekGEWithBounds(b *testing.B) {
 			valid = iter.Next()
 		}
 		if iter.Error() != nil {
-			b.Fatalf(iter.Error().Error())
+			b.Fatal(iter.Error().Error())
 		}
 	}
 	iter.Close()
