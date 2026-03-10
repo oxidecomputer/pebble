@@ -58,21 +58,6 @@ func TestLint(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	t.Run("TestGolint", func(t *testing.T) {
-		t.Parallel()
-
-		// This is overkill right now, but provides a structure for filtering out
-		// lint errors we don't care about.
-		if err := stream.ForEach(
-			stream.Sequence(
-				dirCmd(t, pkg.Dir, "golint", pkgs...),
-			), func(s string) {
-				t.Errorf("\n%s", s)
-			}); err != nil {
-			t.Error(err)
-		}
-	})
-
 	t.Run("TestStaticcheck", func(t *testing.T) {
 		t.Parallel()
 

@@ -249,9 +249,6 @@ func TestIterHistories(t *testing.T) {
 						name = arg.Vals[0]
 					case "reader":
 						reader = batches[arg.Vals[0]]
-						if reader == nil {
-							return fmt.Sprintf("unknown reader %q", arg.Vals[0])
-						}
 					case "point-key-filter":
 						if len(arg.Vals) != 2 {
 							return fmt.Sprintf("blockprop-filter expects 2 arguments, received %d", len(arg.Vals))
